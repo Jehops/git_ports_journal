@@ -1,0 +1,530 @@
+* Contributing to FreeBSD Ports with Git
+
+** Introduction
+
+The FreeBSD ports tree was created in 1994 and tracked using CVS until July 15, 2012 when Subversion took over.  A second repository conversion occurred on April 6, 2021, when the /source of truth/ was migrated from Subversion to Git.  As both CVS and Subversion are centralized version control systems, the required workflow changes associated with the first conversion were not as complex as with the conversion to Git, a distributed version control system.  The goal of this article is to guide those new to either Git, FreeBSD ports, or both through /a/ Git workflow that can be used to contribute to FreeBSD ports.  Topics covered include: a brief overview of concepts in Git, staying up-to-date with remote repositories, working with branches, committing, modifying history, working with Phabricator reviews, testing changes with poudriere, and keeping track of upstream releases.  This is not a comprehensive guide to using Git.  For a thorough introduction to Git, refer to the [[https://git-scm.com/book/][Pro Git book]].  What will also not be covered is how to work with the make specifications that ports and the ports infrastructure are written in.  This is covered in detail in the [[https://docs.freebsd.org/en/books/porters-handbook/book/][FreeBSD Porter's Handbook]].
+
+From an implementation perspective, the defining property that makes Git different from centralized version control systems like Subversion is its support for distributed workflows.  Git does not require a central server that contains /blessed/ copies of the versioned files because 1. copies of the repository are full clones that include meta-data and full history and 2. Git commits are snapshots of the repository rather than delta-based changes to files.  Snapshots are described using hash algorithms that take as input the state of the repository and produce a deterministic hash value in the form of a hexadecimal string.  If two copies of the repository are in the same state, the hash values describing the copies will be the same, whereas two repositories that differ by a single bit flip will produce different hash values.  This ensures the integrity of the repository data.
+
+The history of a Git repository can be considered as a directed acyclic graph with nodes of the graph repository snapshots.  Creating a new branch means starting a new line of development.  What defines the branch is the commit at its tip and all of its ancestral commits.  Under the hood, creating a new branch simply involves creating a new pointer to a snapshot.  Adding new commits to the branch causes the branch pointer to advance to the tip of the branch.  A typical workflow is to create a new branch (off of the main branch) to develop some new feature or to fix a bug.  When the work in the feature branch is ready, the commits of the feature branch can be merged with the main branch.
+
+From a user perspective, support for lightweight local branches and the simplicity of switching between and merging the work of different branches is Git's defining feature.  Because most of this work occurs locally, there is no single workflow that all contributors must subscribe to.  Work the way that best suits you.  However, the official FreeBSD ports repository does enforce certain conventions.  For example, we value a simple linear history, so viewing the history of the FreeBSD ports main branch under Git looks similar to how the history looked under Subversion.  This requires certain constraints when developers push changes to the official repository.  Other projects use a different workflow that results in parallel paths along in the main branch of the repository.  In short, Git is flexible and there is no single workflow that suits all people or projects.  Indeed, at the time of writing there is a FreeBSD working group exploring how we can optimize our Git workflow, so there may be future refinements to how we work with Git.
+
+** Cloning the Ports Tree
+
+With these caveats out of the way, let's explore /a/ Git workflow that is suitable for contributing to the ports tree.  We can start by scanning the [[https://wiki.freebsd.org/WantedPorts][list of requested ports on the FreeBSD Wiki]].  Suppose we wish to create a new port for an application currently on the list, the [[https://nyxt.atlas.engineer/][Nyxt browser]].  The first step is to clone the FreeBSD ports repository.  If you are using ZFS and do not already have a dedicated dataset for the ports tree, create one now.
+
+#+begin_src sh
+  zfs create zroot/usr/ports
+#+end_src
+
+Substitute ~zroot/usr/ports~ if your dataset layout is different, though, here, we will assume the ports tree is under ~/usr/ports~.  If you would like to work on the ports tree as an unprivileged user, you can make the directory writable for your user or group.
+
+#+begin_src sh
+  chgrp porter /usr/ports
+  chmod g+w /usr/ports
+#+end_src
+
+Now clone the repository.  You are downloading the entire repository, which includes about 40,000 ports and a 28-year history, so this will take some time.
+#+begin_src sh
+  git clone -o freebsd --config remote.freebsd.fetch='+refs/notes/*:refs/notes/*' https://git.freebsd.org/ports.git /usr/ports
+#+end_src
+
+The ~-o freebsd~ sets the name for the default remote repository for collaboration (pulling and pushing changes).  The ~--config remote.freebsd.fetch='+refs/notes/*:refs/notes/*'~ adds Subversion revision numbers to the notes field of commits that occurred prior to conversion to Git.  When the clone is finished, you can also create a child ZFS dataset where software distribution files will be stored when building ports.
+
+#+begin_src sh
+  zfs create zroot/usr/ports/distfiles
+#+end_src
+
+Unlike the ports themselves, which are mostly text files, the software distribution files are usually already compressed, so zfs compression can be turned off for the ~zroot/usr/ports/distfiles~ dataset.
+
+#+begin_src sh
+  zfs set compression=off zroot/usr/ports/distfiles
+#+end_src
+
+** Staying Up-to-Date
+
+The ports tree is actively developed, so changes will be pushed frequently to git.freebsd.org/ports.git.  To fetch the changes that occurred in the upstream FreeBSD repository, use
+
+#+begin_src sh
+  git -C /usr/ports fetch freebsd
+#+end_src
+
+Fetching gives you an opportunity to inspect what changes have been made before integrating those changes into a local branch.  Here ~-C /usr/ports~ instructs Git to operate on the repository under ~/usr/ports~.  If the current working directory is ~/usr/ports~, which from this point on is assumed, this flag can be omitted.  The argument ~freebsd~ means fetch from the remote repository ~freebsd~.
+
+To list the commits that were pushed to ~freebsd~'s main branch that are not part of the local main branch, run
+
+#+begin_src sh
+  git log --oneline main..freebsd/main
+#+end_src
+
+Beside the topmost hash, you will see two pointers, ~freebsd/main~ and ~freebsd/HEAD~.  ~HEAD~ is normally a pointer to the last commit in the branch and in this case, like ~freebsd/main~, it points to the last commit in the main branch of the remote repository.  If we run
+
+#+begin_src sh
+  git log --oneline freebsd/main
+#+end_src
+
+and continue down the list of commits, we will eventually see ~HEAD~ and ~main~ which both point to the last commit on the local main branch.
+
+To integrate the new commits from ~freebsd/main~ into our local main branch, run
+
+#+begin_src sh
+  git merge freebsd/main --ff-only
+#+end_src
+
+The ~--ff-only~ (fast-forward only) option means only integrate the work from ~freebsd/main~ into ~main~ if it can be done by moving the ~main~ branch pointer to point to the same commit as ~freebsd/main~.  This can only happen when the output of
+
+#+begin_src sh
+  git log --oneline main..freebsd/main
+#+end_src
+
+descends from the local main branch.  If changes have been made to the local main branch that are not part of ~freebsd/main~, ~--ff-only~ will cause the ~merge~ to fail.  In the workflow described here, we will never make direct changes to the local main branch, so this should never be a problem, but to be safe, we can configure the ~merge~ command to always use ~--ff-only~ with
+
+#+begin_src sh
+  git config merge.ff only
+#+end_src
+
+As a convenience, there is a ~pull~ command that will do both the ~fetch~ and ~merge~.  Depending on the circumstances, using ~pull~ may not be wise, because you do not get the opportunity to inspect what will be integrated into the local branch.  When the upstream repository is an official one, this is less of a concern, however it is recommended to configure ~pull~ to only do fast-forward merges as well with
+
+#+begin_src sh
+  git config pull.ff only
+#+end_src
+
+** Creating a Local Branch
+
+Now that we are able to keep our repository copy up-to-date with git.freebsd.org/ports.git, let's start to think about /creating/ changes.  This is where Git really shines with the use of local branches, which provide a clean and efficient way to keep work-in-progress organized.  Start by creating a new feature branch to work on the new nyxt port.
+
+#+begin_src sh
+   git branch nyxt
+#+end_src
+
+Now switch to the nyxt branch using
+
+#+begin_src sh
+  git checkout nyxt
+#+end_src
+
+A shorthand for both creating and switching to a branch is
+
+#+begin_src sh
+  git checkout -b nyxt
+#+end_src
+
+If you ever want to check which branch you have checked out, you can run
+
+#+begin_src sh
+  git branch --show-current
+#+end_src
+
+You may find it useful to display the current branch in your shell prompt.  If your shell is zsh, you can use [[https://www.freshports.org/shells/git-prompt.zsh/][shells/git-prompt.zsh]] from the ports tree.  A nice feature of ~git-prompt-zsh~ is that it updates the prompt asynchronously, so when ~git status~ or some other Git operation is taking time to complete, it doesn't block other work.  If this appeals to you and you use a shell other than zsh, there are similar code snippets to get Git status information in your prompt if your shell is [[https://github.com/magicmonty/bash-git-prompt][bash]], [[https://fishshell.com/docs/current/cmds/fish_git_prompt.html][fish]], or [[https://gist.github.com/nicwolff/2925803][tcsh.]]
+
+** First Commit
+After you have hacked on your new port, it is time to commit your changes.  First, let's take a look at the status of the working tree with
+
+#+begin_src sh
+  git status
+#+end_src
+
+This will tell you that the file ~www/Makefile~ was modified when you added ~SUBDIR += nyxt~ and you should also see ~www/nyxt~ as untracked.  When interacting with the filesystem under the repository by adding, editing, or removing files, you are interacting with Git's working tree.  Before you can commit changes to the repository, you have to stage which changes will be included in the next snapshot.  In Git terminology, you add files from your working tree to the index.  This extra step is useful, because it gives you precise control over what goes into a commit.  To add all the changes to the index, assuming the current working directory is ~/usr/ports~, you can run 
+
+#+begin_src sh
+  git add www/Makefile www/nyxt
+#+end_src
+
+Now ~git status~ will list all the modified or added files as staged and ready to be committed.  Before we commit though, there are a few more one-time tasks to complete.  Git has a hook feature, which is a way to execute custom scripts when certain events like committing or merging occur.  To configure Git to search the location where ports-specific hooks are stored in the ports repository, with the current working directory anywhere under the repository, run
+
+#+begin_src sh
+  git config --add core.hooksPath .hooks
+#+end_src
+
+At the time of writing there is only one hook in that location, ~prepare-commit-msg~, which provides a helpful template for formatting commit messages.  We also want to configure the editor that will be launched to create commit messages.  Git chooses the editor to launch in this order: the value of the ~GIT_EDITOR~ environment variable, its ~core.editor configuration~ variable, the ~VISUAL~ environment variable, and the ~EDITOR~ environment variable.  For example, we can tell Git to use terminal Emacs to edit commit messages with
+
+#+begin_src sh
+  git config core.editor "emacs -nw"
+#+end_src
+
+If you would like to use this editor for all your Git repositories add the ~--global~ option when setting  ~core.editor~.
+
+#+begin_src sh
+  git config --global core.editor "emacs -nw"
+#+end_src
+
+To commit your changes run
+
+#+begin_src sh
+  git commit
+#+end_src
+
+Your editor should now be displaying the commit template, which provides tips on creating a commit message.  There should be a short subject line that takes the form ~<part of the ports tree that is changing>: <brief overview of the change>~.  A good subject line might be ~www/nyxt: (WIP) First attempt to port Nyxt browser~.  The body of the commit message provides more detail.  An example might be
+
+#+BEGIN_EXAMPLE
+Makefile is still a skeleton.
+
+TODO:
+- Add _DEPENDS
+- Add license information
+- Fix QL_DEPS
+- Add do-build target
+#+END_EXAMPLE
+
+After saving and exiting the editor your changes will be committed.  To recap, our changes progressed from the working tree, to the staging area (index), and finally to the local repository.  To inspect your commit, use ~git log~, which will also confirm that the ~HEAD~ and ~nyxt~ pointers have advanced one commit ahead of the main branch pointer.
+
+** Rewriting Local History
+
+Whereas committing with Subversion meant sending your changes to the server, committing in Git simply means recording your changes locally in a new snapshot.  Thus, with Git, it is wise to commit often.  When it is time to share your work with others, you can refine your local history.  There are a few different ways to rewrite history.  For example, if you see a typo in your latest commit message, this is a good time to fix it, since your changes are still local.  To modify the most recent commit, run
+
+#+begin_src sh
+  git commit --amend
+#+end_src
+
+and amend the commit message in your editor.  If you accidentally did not stage and commit your changes to ~www/Makefile~ in the last commit, simply stage that file before running ~git commit --amend~ and it will be added to the last commit.  Methods for rewriting the history beyond the most recent commit will be discussed later.
+
+** Testing
+Before requesting a review, your new port must be tested.  There are two /port linters/ that can alert you about common violations.  Install them with
+
+#+begin_src sh
+  pkg install portlint portfmt
+#+end_src
+
+To lint your port with portlint, from ~/usr/ports/www/nyxt~, run
+
+#+begin_src sh
+  portlint -AC
+#+end_src
+
+To lint your port with portclippy from the portfmt package, also from ~/usr/ports/www/nyxt~, run
+
+#+begin_src sh
+  portclippy Makefile
+#+end_src
+
+Be aware, while these tools are generally quite helpful, they do not catch all mistakes and they can occasionally make ill-advised suggestions.  Another useful tool is ~portfmt~.  As the name suggests, it can help with formatting your port's Makefile.
+
+#+begin_src sh
+  portfmt -D Makefile
+#+end_src
+
+*** Testing with Poudriere
+[[https://docs.freebsd.org/en/books/porters-handbook/book/#porting-testing][Section 3.4 of the Porter's Handbook]] describes steps to test your port.  It also refers readers to [[https://docs.freebsd.org/en/books/porters-handbook/testing/index.html][Chapter 10]], which includes a guide for setting up [[https://www.freebsd.org/cgi/man.cgi?poudriere][poudriere]], FreeBSD's bulk package builder and port tester.  That section describes the merits of testing with poudriere.  "[Various] tests are done automatically when running poudriere testport.  It is highly recommended that every ports contributor install and test their ports with it."  That Chapter of the Porter's Handbook describes a few different ways to set up a ports tree for poudriere.  When you reach that section, it makes sense to tell poudriere to use the ports tree we already have with
+
+#+begin_src
+  poudriere ports -c -m null -M /usr/ports
+#+end_src
+
+The ~-m~ option tells poudriere to use the null method, i.e., use an existing ports tree found at the location specified as the argument to ~-M~.  Using the null method means that we will manually manage the tree, including keeping it up-to-date and checking out the appropriate branch when testing.  Once you have poudriere set up, we can test our port.  If you created a jail named 13amd64, you can test the new port in that jail with
+
+#+begin_src
+  poudriere testport -j 13amd64 www/nyxt
+#+end_src
+
+Ideally you should test your port on the various [[https://www.freebsd.org/platforms/][tier 1 platforms]] (currently 12i386, 12amd64, 13amd64, and 13arm64).
+
+To run-time test your new port, poudriere can build a package and leave the jail running with the package installed.
+
+#+begin_src
+  poudriere bulk -i -j 13amd64 <category>/<port>
+#+end_src
+It's ~-i~ that instructs poudriere to leave the jail running with the package installed.  This is useful for run-time testing terminal application, but not graphical applications like nyxt.  If the port has OPTIONS, poudriere will test and build the package as the official package builder will, i.e., with the default OPTIONS chosen.  If you want to test or build the package with non-default options, you can run
+
+#+begin_src
+  poudriere options -j 13amd64 www/nyxt
+#+end_src
+
+before ~poudriere testport...~ or ~poudriere bulk...~.
+
+Poudriere also creates a repository that pkg can use to install packages.  If you want to install the package on the same system as poudriere, you have to configure pkg to use it.  From [[https://www.freebsd.org/cgi/man.cgi?pkg.conf(5)][PKG.CONF(5)]], a local configuration can be placed under /usr/local/etc/pkg/repos/.  The name of the file is not important, but it must have a ~.conf~ suffix.  To set a local repository configuration and disable the default official repository configured in /etc/pkg/FreeBSD.conf, create /usr/local/etc/pkg/repos/local.conf with
+
+#+BEGIN_EXAMPLE
+FreeBSD: {
+  enabled: no
+}
+
+Poudriere: {
+  url: "file:///usr/local/poudriere/data/packages/13amd64-default"
+}
+#+END_EXAMPLE
+
+The path given above assumes poudriere's default repository location, the repository based on the 13amd64 jail, and the default ports tree.
+
+If you want to serve packages to remote hosts, you will need to configure a web server.  Poudriere also has a web interface that can display information about current and past builds.  If your webserver is nginx, you can configure it to host poudriere's interface and repository with a server entry like this in ~nginx.conf~.
+
+#+BEGIN_EXAMPLE
+    server {
+        listen 80 accept_filter=httpready;
+        listen 443 ssl;
+
+        server_name pkg.example.org;
+
+        root /usr/local/share/poudriere/html;
+
+        ssl_certificate /usr/local/etc/dehydrated/certs/example.org/fullchain.pem;
+	ssl_certificate_key /usr/local/etc/dehydrated/certs/example.org/privkey.pem;
+
+        # If you use dehydrated as a Lets Encrypt client
+        location /.well-known/acme-challenge {
+            alias /usr/local/www/dehydrated;
+        }
+
+        location /data {
+            alias /usr/local/poudriere/data/logs/bulk;
+
+            # Allow caching dynamic files but ensure they get rechecked
+            location ~* ^.+\.(log|txz|tbz|bz2|gz)$ {
+                add_header Cache-Control "public, must-revalidate, proxy-revalidate";
+            }
+
+            # Don't log json requests as they come in frequently and ensure
+            # caching works as expected
+            location ~* ^.+\.(json)$ {
+                add_header Cache-Control "public, must-revalidate, proxy-revalidate";
+                access_log off;
+                log_not_found off;
+            }
+
+            # Allow indexing only in log dirs
+            location ~ /data/?.*/(logs|latest-per-pkg)/ {
+                autoindex on;
+            }
+
+            break;
+        }
+
+        location /repo {
+            alias /usr/local/poudriere/data/packages;
+	    autoindex on;
+        }
+    }
+#+END_EXAMPLE
+
+If you want to display poudriere's package building logs in the browser, tell nginx about text files with a ~.log~ by editing the ~text/plain~ line in Nginx's ~mime.types~ to contain
+#+BEGIN_EXAMPLE
+text/plain	log txt;
+#+END_EXAMPLE
+
+After restarting nginx with ~service nginx restart~ and pointing your browser to ~http://pkg.example.org~ you should see poudriere's web interface.
+
+** Rewriting History to Prepare for Review
+
+Before sharing your work, the commit history should be well organized, including the commit logs and the number of commits.  For example, maybe you snapshotted your work at the end of the day with a commit containing a message with
+
+#+BEGIN_EXAMPLE
+www/nyxt: (WIP) First attempt to port Nyxt browser
+
+Makefile is still a skeleton.
+
+TODO:
+- Add _DEPENDS
+- Add license information
+- Fix QL_DEPS
+- Add do-build target
+
+#+END_EXAMPLE
+
+This is not a commit that you would want to share with others.  To organize the log of your feature branch, you use Git's history rewriting.  Suppose the history on your ~nyxt~ branch contains seven WIP (work in progress) commits.
+
+#+begin_EXAMPLE
+% git log --oneline
+061be9ca5d98 (HEAD -> nyxt) www/nyxt: (WIP) ready for testing
+cddad2b5886b www/nyxt: (WIP) Add missing www/Makefile entry
+e42f79383312 www/nyxt: (WIP) Add build and install targets
+807099e08e33 www/nyxt: (WIP) Fix QL_DEPENDS
+3cc5f266b434 www/nyxt: (WIP) Complete _DEPENDS
+80d098cd8367 www/nyxt: (WIP) Add license information
+9ec91c5fb244 www/nyxt: (WIP) First attempt to port Nyxt browser
+9f77e9601564 (freebsd/main, freebsd/HEAD, main) net-im/toxic: upgrade to v0.11.2
+#+end_EXAMPLE
+
+The commits above the ~freebsd/main~, ~freebsd/HEAD~, and ~main~ pointers are those in your ~nyxt~ branch that you want to clean up.
+
+#+begin_src sh
+  git rebase -i HEAD~7
+#+end_src
+
+will show a log of the last seven commits (the commits in your local nyxt branch).  The ~-i~ option means the rebase will be interactive.  We specify the commit preceding the subset of commits we wish to modify.  The tilde syntax in ~HEAD~7~ means seven commits before HEAD.  All descendent commits of ~HEAD~7~ will be rewritten.  This is what you should see in your editor.
+
+#+begin_EXAMPLE
+pick 9ec91c5fb244 www/nyxt: (WIP) First attempt to port Nyxt browser
+pick 80d098cd8367 www/nyxt: (WIP) Add license information
+pick 3cc5f266b434 www/nyxt: (WIP) Complete _DEPENDS
+pick 807099e08e33 www/nyxt: (WIP) Fix QL_DEPENDS
+pick e42f79383312 www/nyxt: (WIP) Add build and install targets
+pick cddad2b5886b www/nyxt: (WIP) Add missing www/Makefile entry
+pick 061be9ca5d98 www/nyxt: (WIP) Ready for testing
+
+# Rebase 9f77e9601564..061be9ca5d98 onto 9f77e9601564 (7 commands)
+#
+# Commands:
+# p, pick <commit> = use commit
+# r, reword <commit> = use commit, but edit the commit message
+# e, edit <commit> = use commit, but stop for amending
+# s, squash <commit> = use commit, but meld into previous commit
+# f, fixup [-C | -c] <commit> = like "squash" but keep only the previous
+#                    commit's log message, unless -C is used, in which case
+#                    keep only this commit's message; -c is same as -C but
+#                    opens the editor
+# x, exec <command> = run command (the rest of the line) using shell
+# b, break = stop here (continue rebase later with 'git rebase --continue')
+# d, drop <commit> = remove commit
+# l, label <label> = label current HEAD with a name
+# t, reset <label> = reset HEAD to a label
+# m, merge [-C <commit> | -c <commit>] <label> [# <oneline>]
+# .       create a merge commit using the original merge commit's
+# .       message (or the oneline, if no original merge commit was
+# .       specified); use -c <commit> to reword the commit message
+#
+# These lines can be re-ordered; they are executed from top to bottom.
+#
+# If you remove a line here THAT COMMIT WILL BE LOST.
+#
+# However, if you remove everything, the rebase will be aborted.
+#
+#+end_EXAMPLE
+
+The history is written so that older commits are at the top.  The comments below give all the commands we can use.  We instruct Git on how modify history by writing these commands next to the commits.  The default command beside each commit is ~pick~, i.e., keep the commit as is.  Here, we want to squash these WIP commits into a single commit for review.  To squash the six latest commits into the first commit, change the ~pick~ command to ~squash~ in these bottom six commits.
+
+#+begin_EXAMPLE
+pick 9ec91c5fb244 www/nyxt: (WIP) First attempt to port Nyxt browser
+squash 80d098cd8367 www/nyxt: (WIP) Add license information
+squash 3cc5f266b434 www/nyxt: (WIP) Complete _DEPENDS
+squash 807099e08e33 www/nyxt: (WIP) Fix QL_DEPENDS
+squash e42f79383312 www/nyxt: (WIP) Add build and install targets
+squash cddad2b5886b www/nyxt: (WIP) Add missing www/Makefile entry
+squash 061be9ca5d98 www/nyxt: (WIP) Ready for testing
+#+end_EXAMPLE
+
+When you save and quit your editor, Git will complete the rebase, then show you the log messages in your editor, so that you can write a new log message for the new, single commit.  Here is an example commit message that we might want to use when sharing our work with others for review.
+#+begin_EXAMPLE
+www/nyxt: New port for the Nyxt browser
+
+Nyxt is a keyboard-driven web browser designed for power users.
+Inspired by Emacs and Vim, it has familiar key-bindings and is
+infinitely extensible in Lisp.
+
+WWW: https://nyxt.atlas.engineer/
+#+end_EXAMPLE
+Refer to the November 2020 Journal article for a deeper discussion on [[https://freebsdfoundation.org/wp-content/uploads/2020/11/Writing-Commit-Messages.pdf][Writing Good FreeBSD Commit Messages]].  Now ~git log --oneline~ will show a single commit in our ~nyxt~ branch.
+
+#+BEGIN_EXAMPLE
+7392483f6147 (HEAD -> nyxt) www/nyxt: New port for the Nyxt browser
+9f77e9601564 (freebsd/main, freebsd/HEAD, main) net-im/toxic: upgrade to v0.11.2
+#+END_EXAMPLE
+
+Another way we will want to rewrite the history is by rebasing our work in the ~nyxt~ branch on top of an up-to-date main branch.  First update the main branch.
+#+begin_src sh
+  git checkout main
+  git pull
+#+end_src
+
+Then switch back to the ~nyxt~ branch and tell Git to do the rebase.
+#+begin_src sh
+  git checkout nyxt
+  git rebase main
+#+end_src
+
+If all goes well, ~git log~ will show your commits in the ~nyxt~ branch descending from the latest commits from the ~main~ branch.  If conflicting changes were made in ~freebsd/main~ and your ~nyxt~ branch, Git will inform you which files have conflicts and give you the opportunity to manually resolve them.
+
+#+begin_EXAMPLE
+jrm@ser /usr/ports/ [nyxt|✔] % git rebase main
+Auto-merging www/Makefile
+CONFLICT (content): Merge conflict in www/Makefile
+error: could not apply 531d9081dfb1... Add new entry for nyxt browser
+hint: Resolve all conflicts manually, mark them as resolved with
+hint: "git add/rm <conflicted_files>", then run "git rebase --continue".
+hint: You can instead skip this commit: run "git rebase --skip".
+hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
+Could not apply 531d9081dfb1... Add new entry for nyxt browser
+#+end_EXAMPLE
+
+We can see the conflict is in ~www/Makefile~ and Git tells use what options we have to resolve the conflict manually.  Here is an example of what we might see in ~www/Makefile~
+
+#+begin_example
+<<<<<<< HEAD
+SUBDIR += nyan
+||||||| parent of 531d9081dfb1 (Add new entry for nyxt browser)
+=======
+SUBDIR += nyxt
+>>>>>>> 531d9081dfb1 (Add new entry for nyxt browser)
+#+end_example
+
+In this case, it is straightforward to manually fix the conflict.  We want to add our entry for ~nyxt~ below the new entry for ~nyan~.  After editing the file so it looks like
+#+begin_example
+SUBDIR += nyan
+SUBDIR += nyxt
+#+end_example
+
+tell Git that we are ready to continue with
+
+#+begin_src sh
+  git add www/Makefile
+  git rebase --continue
+#+end_src
+
+** Submitting Work for Review
+
+Now we are ready to submit our work for review.  FreeBSD currently has two ways contributors can submit work for review.  [[https://bugs.freebsd.org/][Bugzilla]] is used for submitting bugs and [[https://reviews.freebsd.org/][Phabricator]] is used for reviewing source code changes.  Both accept patches, but Phabricator has helpful features that are missing from Bugzilla, such as allowing reviewers to add comments specific to one or more lines of the patch.  To cover both methods, let's create a review in Phabricator, then a new bug in Bugzilla that points to the Phabricator review.
+
+*** FreeBSD Phabricator Reviews
+
+To begin using FreeBSD's Phabricator instance for code review at https://reviews.FreeBSD.org, you must first [[https://reviews.freebsd.org/auth/register/][create an account]], then install the arcanist command line tool.
+
+#+begin_src sh
+  pkg install arcanist-php74
+#+end_src
+
+Set up ~~/.arcrc~ with the required certificates by running
+
+#+begin_src sh
+arc install-certificate https://reviews.freebsd.org
+#+end_src
+
+and follow the instructions.  Next, configure Arcanist to use https://reviews.freebsd.org as the default URI.
+
+#+begin_src sh
+arc set-config default https://reviews.freebsd.org/
+#+end_src
+
+Now you are ready to submit your first review.
+
+From the ~nyxt~ branch run
+
+#+begin_src sh
+arc diff --create main
+#+end_src
+
+This will create a new review with all the commits in the nyxt branch.  In this example, we squashed our commits into a single commit, so the revision will be created with that single commit.  When your editor opens, you will have the opportunity to edit the fields that are part of the revision.  The top line will be the subject of your commit log, ~www/nyxt: New port for the Nyxt browser~ and the summary will contain the rest of the commit log.  Under test plan, you can list what you did to test the port.  For example, if you did ~poudriere testport~ for each of the supported versions on the tier 1 architectures, you could write
+
+#+begin_EXAMPLE
+poudriere testport 12/13 amd64/arm64
+#+end_EXAMPLE
+
+You must also add at least one reviewer.  If you have one or more ports committers that you have been working with, you can add their usernames here.  For example
+
+#+begin_EXAMPLE
+Reviewers: ashish rene
+#+end_EXAMPLE
+
+You can also specify group reviewers, which are of the form ~#group_name~ such as ~#ports_committers~.  The ~Subscribers:~ field, like ~Reviewers:~ takes a list of users, but these users are lurkers and do not reject or approve your work.  When reviewers request changes, you can update the revision with
+
+#+begin_src sh
+  arc diff --update <revision>
+#+end_src
+
+where <revision> is the revision ID and takes the form DXXXXX.  It can be found in the email sent to your address when you created the revision.  For example, if your revision is found at https://reviews.freebsd.org/D33314, then use D33314 as the <revision>.
+
+*** Submitting Bugzilla Bug Reports
+
+To create a new Bugzilla bug, point your browser to https://bugs.freebsd.org and click the ~New~ link at the top of the page.  If you are not logged in to the FreeBSD Bugzilla instance, you will be prompted to do so.  If you do not have a FreeBSD Bugzilla account, you can use the link on the login page to create a new one.
+
+From here, you choose the ~Ports & Packages~ link since we are creating a new port and choose ~Individual Port(s)~ for the ~Component~.  For ports-specific bugs, the bug's subject line can be the same as the commit subject, i.e., ~www/nyxt: New port for the Nyxt browser~.  If the port isn't new, the ~category/port~ prefix will automatically assign the bug to the maintainer of the port.  In the description you can add the information the rest of the commit log and any other information helpful for others reading the bug, like a link to the phabricator review.
+
+When your new port is accepted and pushed to git.freebsd.org/ports.git, your new job as the maintainer of the port begins.  For an outline of the responsibilities of port maintainers, refer to the [[https://docs.freebsd.org/en/articles/contributing/#maintain-port][The challenge for port maintainers article.]]  To keep up-to-date with upstream, [[https://portscout.freebsd.org/][portscout]] is a helpful service to alert when there is a new release, so you can submit a port update.  If upstream uses GitHub, you can also be alerted of new releases by following the ~Watch~ and ~Custom~ links, then check ~Releases~ on the project's page.  When there simple updates to your port that only contain a change to the ~DISTVERSION~ line and the ~distinfo~ file, submitting a Phabricator review is not necessary.  It is sufficient to create a patch using (from the feature branch):
+
+#+begin_src sh
+  git format-patch main
+#+end_src
+
+and attach it to a Bugzilla bug.  Another desirable feature of Git is the option for committers to commit as different users.  This means when you submit a patch and a committer pushes it to git.freebsd.org/ports.git, ~git log~ will give you credit for your work by showing you as the author of the commit.
+
+** Opinionated Conclusions
+
+Change is hard.  Many of us who dedicated significant time to become productive using Subversion, were reluctant to change to a new version control system, especially one so different from Subversion.  We lost a few nice features like simple, monotonically increasing commit revisions and deterministic history retention when directories and files are moved within the repository.  The learning curve for many of us was (and still is) steep.  However, after three quarters of year, most indications suggest developers and the wider community are pleased and productive with the change.  It's difficult to say if this is due to the conversion, but the number of commits to the ports tree from the conversion date until the time of writing, 2021-04-06 to 2021-12-06 is 27,043.  This is a few thousand more than the number for the same time last year, which was 24,945.  Let's hope this is a trend and Git modern workflow serves us well for at least a decade or two.
