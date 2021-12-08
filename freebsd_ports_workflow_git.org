@@ -30,7 +30,7 @@ Now clone the repository.  You are downloading the entire repository, which incl
   git clone -o freebsd --config remote.freebsd.fetch='+refs/notes/*:refs/notes/*' https://git.freebsd.org/ports.git /usr/ports
 #+end_src
 
-The ~-o freebsd~ sets the name for the default remote repository for collaboration (pulling and pushing changes).  The ~--config remote.freebsd.fetch='+refs/notes/*:refs/notes/*'~ adds Subversion revision numbers to the notes field of commits that occurred prior to conversion to Git.  When the clone is finished, you can also create a child ZFS dataset where software distribution files will be stored when building ports.
+The ~-o freebsd~ sets the name for the default remote repository for collaboration (pulling and pushing changes).  The ~--config remote.freebsd.fetch='+refs/notes/*:refs/notes/*'~ adds Subversion revision numbers to the notes field of commits that occurred prior to the conversion to Git.  When the clone is finished, you can also create a child ZFS dataset where software distribution files will be stored when building ports.
 
 #+begin_src sh
   zfs create zroot/usr/ports/distfiles
@@ -84,7 +84,7 @@ descends from the local main branch.  If changes have been made to the local mai
   git config merge.ff only
 #+end_src
 
-As a convenience, there is a ~pull~ command that will do both the ~fetch~ and ~merge~.  Depending on the circumstances, using ~pull~ may not be wise, because you do not get the opportunity to inspect what will be integrated into the local branch.  When the upstream repository is an official one, this is less of a concern, however it is recommended to configure ~pull~ to only do fast-forward merges as well with
+As a convenience, there is a ~pull~ command that will do both the ~fetch~ and ~merge~.  Depending on the circumstances, using ~pull~ may not be wise, because you do not get the opportunity to inspect what will be integrated into your local branch.  If the commits in the main branch of your ports repository are always a subset of the commits in ~freebsd/main~ (as recommended here), this is less of a concern.  To reduce the chances of diverging from ~freebsd/main~ when using ~git pull~, we can configure the command to only do fast-forward merges as well with
 
 #+begin_src sh
   git config pull.ff only
@@ -137,7 +137,7 @@ Now ~git status~ will list all the modified or added files as staged and ready t
   git config --add core.hooksPath .hooks
 #+end_src
 
-At the time of writing there is only one hook in that location, ~prepare-commit-msg~, which provides a helpful template for formatting commit messages.  We also want to configure the editor that will be launched to create commit messages.  Git chooses the editor to launch in this order: the value of the ~GIT_EDITOR~ environment variable, its ~core.editor configuration~ variable, the ~VISUAL~ environment variable, and the ~EDITOR~ environment variable.  For example, we can tell Git to use terminal Emacs to edit commit messages with
+At the time of writing there is only one hook in that location, ~prepare-commit-msg~, which provides a helpful template for formatting commit messages.  We also want to configure the editor that will be launched to create commit messages.  Git chooses the editor to launch in this order: the value of the ~GIT_EDITOR~ environment variable, its ~core.editor~ configuration variable, the ~VISUAL~ environment variable, and the ~EDITOR~ environment variable.  For example, we can tell Git to use terminal Emacs to edit commit messages with
 
 #+begin_src sh
   git config core.editor "emacs -nw"
@@ -224,7 +224,9 @@ To run-time test your new port, poudriere can build a package and leave the jail
 #+begin_src
   poudriere bulk -i -j 13amd64 <category>/<port>
 #+end_src
-It's ~-i~ that instructs poudriere to leave the jail running with the package installed.  This is useful for run-time testing terminal application, but not graphical applications like nyxt.  If the port has OPTIONS, poudriere will test and build the package as the official package builder will, i.e., with the default OPTIONS chosen.  If you want to test or build the package with non-default options, you can run
+It's ~-i~ that instructs poudriere to leave the jail running with the package installed.  This is useful for run-time testing terminal application, but not graphical applications like nyxt.
+
+If the port has OPTIONS, poudriere will test and build the package as the official package builder will, i.e., with the default OPTIONS chosen.  If you want to test or build the package with non-default options, you can run
 
 #+begin_src
   poudriere options -j 13amd64 www/nyxt
@@ -296,12 +298,12 @@ If you want to serve packages to remote hosts, you will need to configure a web 
     }
 #+END_EXAMPLE
 
-If you want to display poudriere's package building logs in the browser, tell nginx about text files with a ~.log~ by editing the ~text/plain~ line in Nginx's ~mime.types~ to contain
+If you want to display poudriere's package building logs in the browser, tell nginx about text files with a ~.log~ suffix by editing the ~text/plain~ line in Nginx's ~mime.types~ to contain
 #+BEGIN_EXAMPLE
 text/plain	log txt;
 #+END_EXAMPLE
 
-After restarting nginx with ~service nginx restart~ and pointing your browser to ~http://pkg.example.org~ you should see poudriere's web interface.
+After restarting nginx with ~service nginx restart~, point your browser to ~http://pkg.example.org~ to see poudriere's web interface.
 
 ** Rewriting History to Prepare for Review
 
@@ -380,7 +382,7 @@ pick 061be9ca5d98 www/nyxt: (WIP) Ready for testing
 #
 #+end_EXAMPLE
 
-The history is written so that older commits are at the top.  The comments below give all the commands we can use.  We instruct Git on how modify history by writing these commands next to the commits.  The default command beside each commit is ~pick~, i.e., keep the commit as is.  Here, we want to squash these WIP commits into a single commit for review.  To squash the six latest commits into the first commit, change the ~pick~ command to ~squash~ in these bottom six commits.
+The history is written so that older commits are at the top.  The comments below list all the commands we can use.  We instruct Git on how modify history by writing these commands next to the commits.  The default command beside each commit is ~pick~, i.e., keep the commit as is.  Here, we want to squash these WIP commits into a single commit for review.  To squash the six latest commits into the first commit, change the ~pick~ command to ~squash~ in these bottom six commits.
 
 #+begin_EXAMPLE
 pick 9ec91c5fb244 www/nyxt: (WIP) First attempt to port Nyxt browser
