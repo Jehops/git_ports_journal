@@ -461,6 +461,50 @@ tell Git that we are ready to continue with
   git rebase --continue
 #+end_src
 
+Rebasing your feature branch onto an updated main branch is something you will do often enough that you may want to use a convenience script to do it in one step.  Here is a simple example.  Run ~rum~ from the feature branch to do the rebase in one step.
+
+#+begin_src sh
+  #!/bin/sh
+
+  # rum, r_ebase onto u_pdated m_ain
+  #
+  # Usage: rum
+  #
+  # globals expected in ${HOME}/.ports.conf with sample values
+  # No leading '/' on directory names means they are relative to $HOME
+  # portsd='/usr/ports'           # ports directory
+
+  . "$HOME/.ports.conf"
+
+  usage () {
+    cat <<EOF 1>&2
+  Usage: ${0##*/}
+  EOF
+  }
+
+  ############################################ main
+
+  [ $# != 0 ] && { usage; exit 1; }
+
+  [ -n "${portsd##/*}" ] && portsd="${HOME}/$portsd"
+
+  # current branch
+  cb="$(git -C "$portsd" branch --show-current)"
+
+  if [ -z "$cb" ]; then
+    printf "Could not determine the current branch.\\"
+    exit 1
+  elif [ "$cb" = "main" ]; then
+    printf "The main branch is checked out.\\n"
+    exit 1
+  fi
+
+  git -C "$portsd" checkout main && \
+    pull && \
+    git -C "$portsd" checkout "$cb" && \
+    git rebase main
+#+end_src
+
 ** Submitting Work for Review
 
 Now we are ready to submit our work for review.  FreeBSD currently has two ways contributors can submit work for review.  [[https://bugs.freebsd.org/][Bugzilla]] is used for submitting bugs and [[https://reviews.freebsd.org/][Phabricator]] is used for reviewing source code changes.  Both accept patches, but Phabricator has helpful features that are missing from Bugzilla, such as allowing reviewers to add comments specific to one or more lines of the patch.  To cover both methods, let's create a review in Phabricator, then a new bug in Bugzilla that points to the Phabricator review.
