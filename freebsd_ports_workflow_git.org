@@ -6,34 +6,35 @@ The FreeBSD ports tree was created in 1994 and tracked using CVS until July 15, 
 
 From an implementation perspective, the defining property that makes Git different from centralized version control systems like Subversion is its support for distributed workflows.  Git does not require a central server that contains /blessed/ copies of the versioned files because 1. copies of the repository are full clones that include meta-data and full history and 2. Git commits are snapshots of the repository rather than delta-based changes to files.  Snapshots are described using hash algorithms that take as input the state of the repository and produce a deterministic hash value in the form of a hexadecimal string.  If two copies of the repository are in the same state, the hash values describing the copies will be the same, whereas two repositories that differ by a single bit flip will produce different hash values.  This ensures the integrity of the repository data.
 
-The history of a Git repository can be considered as a directed acyclic graph with nodes of the graph repository snapshots.  Creating a new branch means starting a new line of development.  What defines the branch is the commit at its tip and all of its ancestral commits.  Under the hood, creating a new branch simply involves creating a new pointer to a snapshot.  Adding new commits to the branch causes the branch pointer to advance to the tip of the branch.  A typical workflow is to create a new branch (off of the main branch) to develop some new feature or to fix a bug.  When the work in the feature branch is ready, the commits of the feature branch can be merged with the main branch.
+The history of a Git repository can be considered as a directed acyclic graph with nodes of the graph repository snapshots.  Creating a new branch means starting a new line of development.  What defines the branch is the commit at its tip and all of its ancestral commits.  Under the hood, creating a new branch simply involves creating a new pointer to a snapshot.  Adding new commits to the branch causes the branch pointer to advance to the tip of the branch.  A common Git workflow is to create a new branch (off of the main branch) to develop some new feature or to fix a bug.  When the work in the feature branch is ready, the commits of the feature branch can be merged with the main branch.
 
 From a user perspective, support for lightweight local branches and the simplicity of switching between and merging the work of different branches is Git's defining feature.  Because most of this work occurs locally, there is no single workflow that all contributors must subscribe to.  Work the way that best suits you.  However, the official FreeBSD ports repository does enforce certain conventions.  For example, we value a simple linear history, so viewing the history of the FreeBSD ports main branch under Git looks similar to how the history looked under Subversion.  This requires certain constraints when developers push changes to the official repository.  Other projects use a different workflow that results in parallel paths along in the main branch of the repository.  In short, Git is flexible and there is no single workflow that suits all people or projects.  Indeed, at the time of writing there is a FreeBSD working group exploring how we can optimize our Git workflow, so there may be future refinements to how we work with Git.
 
 ** Cloning the Ports Tree
 
-With these caveats out of the way, let's explore /a/ Git workflow that is suitable for contributing to the ports tree.  We can start by scanning the [[https://wiki.freebsd.org/WantedPorts][list of requested ports on the FreeBSD Wiki]].  Suppose we wish to create a new port for an application currently on the list, the [[https://nyxt.atlas.engineer/][Nyxt browser]].  The first step is to clone the FreeBSD ports repository.  If you are using ZFS and do not already have a dedicated dataset for the ports tree, create one now.
+With these caveats out of the way, let's explore /a/ Git workflow that is suitable for contributing to the ports tree.  We can start by scanning the [[https://wiki.freebsd.org/WantedPorts][list of requested ports on the FreeBSD Wiki]].  Suppose we wish to create a new port for an application currently on the list, the [[https://nyxt.atlas.engineer/][Nyxt browser]].  The first step is to clone the FreeBSD ports repository.  If you are using ZFS, you may wish to create a dedicated dataset for your development ports tree.
 
 #+begin_src sh
-  zfs create zroot/usr/ports
+  zfs create zroot/usr/home/ashish/freebsd/ports
 #+end_src
 
-Substitute ~zroot/usr/ports~ if your dataset layout is different, though, here, we will assume the ports tree is under ~/usr/ports~.  If you would like to work on the ports tree as an unprivileged user, you can make the directory writable for your user or group.
+Of course, substitute ~zroot/usr/home/ashish/freebsd/ports~ for your dataset layout.
 
+Now clone the repository.  You are downloading the entire repository, which includes over 40,000 ports and a 28-year history, so this will take some time.
 #+begin_src sh
-  chgrp porter /usr/ports
-  chmod g+w /usr/ports
-#+end_src
-
-Now clone the repository.  You are downloading the entire repository, which includes about 40,000 ports and a 28-year history, so this will take some time.
-#+begin_src sh
-  git clone -o freebsd --config remote.freebsd.fetch='+refs/notes/*:refs/notes/*' https://git.freebsd.org/ports.git /usr/ports
+  git clone -o freebsd --config remote.freebsd.fetch='+refs/notes/*:refs/notes/*' https://git.freebsd.org/ports.git ~/freebsd/ports
 #+end_src
 
 The ~-o freebsd~ sets the name for the default remote repository for collaboration (pulling and pushing changes).  The ~--config remote.freebsd.fetch='+refs/notes/*:refs/notes/*'~ adds Subversion revision numbers to the notes field of commits that occurred prior to the conversion to Git.  When the clone is finished, you can also create a child ZFS dataset where software distribution files will be stored when building ports.
 
 #+begin_src sh
-  zfs create zroot/usr/ports/distfiles
+  zfs create zroot/usr/home/ashish/ports/distfiles
+#+end_src
+
+Unlike the ports themselves, which are mostly text files, the software distribution files are usually already compressed, so zfs compression can be turned off for the ~zroot/usr/home/ashish/freebsd/ports/distfiles~ dataset.
+
+#+begin_src sh
+  zfs set compression=off zroot/usr/home/ashish/freebsd/ports/distfiles
 #+end_src
 
 Unlike the ports themselves, which are mostly text files, the software distribution files are usually already compressed, so zfs compression can be turned off for the ~zroot/usr/ports/distfiles~ dataset.
@@ -47,10 +48,10 @@ Unlike the ports themselves, which are mostly text files, the software distribut
 The ports tree is actively developed, so changes will be pushed frequently to git.freebsd.org/ports.git.  To fetch the changes that occurred in the upstream FreeBSD repository, use
 
 #+begin_src sh
-  git -C /usr/ports fetch freebsd
+  git -C ~/freebsd/ports fetch freebsd
 #+end_src
 
-Fetching gives you an opportunity to inspect what changes have been made before integrating those changes into a local branch.  Here ~-C /usr/ports~ instructs Git to operate on the repository under ~/usr/ports~.  If the current working directory is ~/usr/ports~, which from this point on is assumed, this flag can be omitted.  The argument ~freebsd~ means fetch from the remote repository ~freebsd~.
+Fetching gives you an opportunity to inspect what changes have been made before integrating those changes into a local branch.  Here ~-C ~/freebsd/ports~ instructs Git to operate on the repository under ~~/freebsd/ports~.  If the current working directory is ~~/freebsd/ports~, which from this point on is assumed, this flag can be omitted.  The argument ~freebsd~ means fetch from the remote repository ~freebsd~.
 
 To list the commits that were pushed to ~freebsd~'s main branch that are not part of the local main branch, run
 
@@ -125,7 +126,7 @@ After you have hacked on your new port, it is time to commit your changes.  Firs
   git status
 #+end_src
 
-This will tell you that the file ~www/Makefile~ was modified when you added ~SUBDIR += nyxt~ and you should also see ~www/nyxt~ as untracked.  When interacting with the filesystem under the repository by adding, editing, or removing files, you are interacting with Git's working tree.  Before you can commit changes to the repository, you have to stage which changes will be included in the next snapshot.  In Git terminology, you add files from your working tree to the index.  This extra step is useful, because it gives you precise control over what goes into a commit.  To add all the changes to the index, assuming the current working directory is ~/usr/ports~, you can run 
+This will tell you that the file ~www/Makefile~ was modified when you added ~SUBDIR += nyxt~ and you should also see ~www/nyxt~ as untracked.  When interacting with the filesystem under the repository by adding, editing, or removing files, you are interacting with Git's working tree.  Before you can commit changes to the repository, you have to stage which changes will be included in the next snapshot.  In Git terminology, you add files from your working tree to the index.  This extra step is useful, because it gives you precise control over what goes into a commit.  To add all the changes to the index, assuming the current working directory is ~~/freebsd/ports~, you can run
 
 #+begin_src sh
   git add www/Makefile www/nyxt
@@ -186,13 +187,13 @@ Before requesting a review, your new port must be tested.  There are two /port l
   pkg install portlint portfmt
 #+end_src
 
-To lint your port with portlint, from ~/usr/ports/www/nyxt~, run
+To lint your port with portlint, from ~~/freebsd/ports/www/nyxt~, run
 
 #+begin_src sh
   portlint -AC
 #+end_src
 
-To lint your port with portclippy from the portfmt package, also from ~/usr/ports/www/nyxt~, run
+To lint your port with portclippy from the portfmt package, also from ~~/freebsd/ports/www/nyxt~, run
 
 #+begin_src sh
   portclippy Makefile
@@ -208,7 +209,7 @@ Be aware, while these tools are generally quite helpful, they do not catch all m
 [[https://docs.freebsd.org/en/books/porters-handbook/book/#porting-testing][Section 3.4 of the Porter's Handbook]] describes steps to test your port.  It also refers readers to [[https://docs.freebsd.org/en/books/porters-handbook/testing/index.html][Chapter 10]], which includes a guide for setting up [[https://www.freebsd.org/cgi/man.cgi?poudriere][poudriere]], FreeBSD's bulk package builder and port tester.  That section describes the merits of testing with poudriere.  "[Various] tests are done automatically when running poudriere testport.  It is highly recommended that every ports contributor install and test their ports with it."  That Chapter of the Porter's Handbook describes a few different ways to set up a ports tree for poudriere.  When you reach that section, it makes sense to tell poudriere to use the ports tree we already have with
 
 #+begin_src
-  poudriere ports -c -m null -M /usr/ports
+  poudriere ports -c -m null -M ~/freebsd/ports
 #+end_src
 
 The ~-m~ option tells poudriere to use the null method, i.e., use an existing ports tree found at the location specified as the argument to ~-M~.  Using the null method means that we will manually manage the tree, including keeping it up-to-date and checking out the appropriate branch when testing.  Once you have poudriere set up, we can test our port.  If you created a jail named 13amd64, you can test the new port in that jail with
@@ -317,7 +318,7 @@ Makefile is still a skeleton.
 TODO:
 - Add _DEPENDS
 - Add license information
-- Fix QL_DEPS
+- Fix QL_DEPENDS
 - Add do-build target
 
 #+END_EXAMPLE
@@ -339,10 +340,12 @@ e42f79383312 www/nyxt: (WIP) Add build and install targets
 The commits above the ~freebsd/main~, ~freebsd/HEAD~, and ~main~ pointers are those in your ~nyxt~ branch that you want to clean up.
 
 #+begin_src sh
-  git rebase -i HEAD~7
+  git rebase -i main
 #+end_src
 
-will show a log of the last seven commits (the commits in your local nyxt branch).  The ~-i~ option means the rebase will be interactive.  We specify the commit preceding the subset of commits we wish to modify.  The tilde syntax in ~HEAD~7~ means seven commits before HEAD.  All descendent commits of ~HEAD~7~ will be rewritten.  This is what you should see in your editor.
+will show a log of the commits in your local nyxt branch).  The ~-i~ option means the rebase will be interactive.  We specify the commit preceding the subset of commits we wish to modify.  In this case it is easiest to specify that commit with the ~main~ pointer.  We could have also used tilde syntax, i.e., ~HEAD~7~ which means seven commits before HEAD, but it's tedious to count the seven commits.
+
+This is what you should see in your editor.
 
 #+begin_EXAMPLE
 pick 9ec91c5fb244 www/nyxt: (WIP) First attempt to port Nyxt browser
@@ -426,7 +429,7 @@ Then switch back to the ~nyxt~ branch and tell Git to do the rebase.
 If all goes well, ~git log~ will show your commits in the ~nyxt~ branch descending from the latest commits from the ~main~ branch.  If conflicting changes were made in ~freebsd/main~ and your ~nyxt~ branch, Git will inform you which files have conflicts and give you the opportunity to manually resolve them.
 
 #+begin_EXAMPLE
-jrm@ser /usr/ports/ [nyxt|✔] % git rebase main
+~/freebsd/ports [nyxt|✔] % git rebase main
 Auto-merging www/Makefile
 CONFLICT (content): Merge conflict in www/Makefile
 error: could not apply 531d9081dfb1... Add new entry for nyxt browser
@@ -472,7 +475,7 @@ Rebasing your feature branch onto an updated main branch is something you will d
   #
   # globals expected in ${HOME}/.ports.conf with sample values
   # No leading '/' on directory names means they are relative to $HOME
-  # portsd='/usr/ports'           # ports directory
+  # portsd='/usr/home/ashish/ports'           # ports directory
 
   . "$HOME/.ports.conf"
 
