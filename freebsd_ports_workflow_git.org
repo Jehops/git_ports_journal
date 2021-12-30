@@ -37,11 +37,21 @@ Unlike the ports themselves, which are mostly text files, the software distribut
   zfs set compression=off zroot/usr/home/ashish/freebsd/ports/distfiles
 #+end_src
 
-Unlike the ports themselves, which are mostly text files, the software distribution files are usually already compressed, so zfs compression can be turned off for the ~zroot/usr/ports/distfiles~ dataset.
+You have a few options for telling [[https://www.freebsd.org/cgi/man.cgi?make(1)][make(1)]] about the location of your ports tree.  The first option is to add configuration to ~/etc/make.conf~.
 
-#+begin_src sh
-  zfs set compression=off zroot/usr/ports/distfiles
+#+begin_src
+.if ${.CURDIR:M/usr/home/ashish/freebsd/ports/*}
+PORTSDIR=/usr/home/ashish/freebsd/ports
+.endif
 #+end_src
+
+An alternative method is by setting the ~PORTSDIR~ environment variable.  For example, if your shell is ~zsh~, you can add the line below to ~~/.zshrc~.
+
+#+begin_src
+export PORTSDIR=/home/foo/freebsd/ports
+#+end_src
+
+If you plan on working with multiple ports trees, a tool like [[https://www.freshports.org/sysutils/direnv/][sysutils/direnv]] is useful tool for loading or unloading environment variables depending on the current directory
 
 ** Staying Up-to-Date
 
